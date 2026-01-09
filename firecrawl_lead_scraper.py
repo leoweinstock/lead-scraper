@@ -11,25 +11,17 @@ from firecrawl import Firecrawl
 
 
 CENTRAL_PAGE_KEYWORDS = ["kontakt", "impressum"]
-ROLE_KEYWORDS = [
+DECISION_ROLE_PRIORITY = [
     "einrichtungsleitung",
     "klinikleitung",
     "geschäftsführung",
     "direktion",
     "verwaltungsleitung",
-    "pflegedienstleitung",
-    "personalleitung",
+]
+ROLE_KEYWORDS = [
+    *DECISION_ROLE_PRIORITY,
     "leitung",
     "ansprechpartner",
-]
-ROLE_PRIORITY = [
-    "einrichtungsleitung",
-    "klinikleitung",
-    "geschäftsführung",
-    "direktion",
-    "verwaltungsleitung",
-    "pflegedienstleitung",
-    "personalleitung",
 ]
 
 EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -100,24 +92,30 @@ def infer_org_name(base_url: str, documents: List[Document]) -> str:
 
 
 def is_central_page(url: str, title: str) -> bool:
-    candidate = f"{url} {title}".lower()
+    candidate = f"{url or ''} {title or ''}".lower()
     return any(keyword in candidate for keyword in CENTRAL_PAGE_KEYWORDS)
 
 
-def is_decision_page(url: str, text: str) -> bool:
-    candidate = f"{url} {text}".lower()
+def is_decision_page(url: Optional[str], title: str, text: str) -> bool:
+    candidate = f"{url or ''} {title or ''} {text}".lower()
     return any(keyword in candidate for keyword in ROLE_KEYWORDS)
+
+
+def is_binary_document(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    return url.lower().endswith((".pdf", ".doc", ".docx"))
 
 
 def extract_role(line: str) -> Optional[str]:
     line_lower = line.lower()
-    for role in ROLE_PRIORITY:
+    for role in DECISION_ROLE_PRIORITY:
         if role in line_lower:
             return role
     return None
 
 
-def extract_decision_makers(text: str, source_url: str) -> List[DecisionMaker]:
+def extract_decision_makers(text: str, source_url: Optional[str]) -> List[DecisionMaker]:
     decision_makers: List[DecisionMaker] = []
     seen = set()
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -125,11 +123,11 @@ def extract_decision_makers(text: str, source_url: str) -> List[DecisionMaker]:
         role = extract_role(line)
         if not role:
             continue
-        context_lines = [line]
-        if idx > 0:
-            context_lines.insert(0, lines[idx - 1])
-        if idx + 1 < len(lines):
-            context_lines.append(lines[idx + 1])
+        context_lines = []
+        for offset in range(-2, 3):
+            line_idx = idx + offset
+            if 0 <= line_idx < len(lines):
+                context_lines.append(lines[line_idx])
         context_text = " ".join(context_lines)
         name_match = NAME_REGEX.search(context_text)
         name = name_match.group(1) if name_match else None
@@ -191,25 +189,47 @@ def summarize_contacts(base_url: str, documents: List[Document]) -> CrawlResult:
     decision_makers: List[DecisionMaker] = []
 
     for doc in documents:
-        source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url") or ""
+        source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
         title = doc.metadata.get("title") or ""
         text = doc.markdown or ""
 
         if not central_contact.phone or not central_contact.email:
-            if is_central_page(source_url, title):
+            if source_url and is_central_page(source_url, title):
                 emails = extract_emails(text)
                 phones = extract_phones(text)
                 if emails or phones:
                     central_contact.email = central_contact.email or pick_first(emails)
                     central_contact.phone = central_contact.phone or pick_first(phones)
                     central_contact.source_url = central_contact.source_url or source_url
+        if central_contact.phone and central_contact.email:
+            break
 
-        if len(decision_makers) < 3 and is_decision_page(source_url, text):
-            candidates = extract_decision_makers(text, source_url)
-            for candidate in candidates:
-                if len(decision_makers) >= 3:
-                    break
-                decision_makers.append(candidate)
+    def append_decision_makers(candidate_docs: List[Document]) -> None:
+        for doc in candidate_docs:
+            if len(decision_makers) >= 3:
+                break
+            source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
+            title = doc.metadata.get("title") or ""
+            text = doc.markdown or ""
+
+            if is_decision_page(source_url, title, text):
+                candidates = extract_decision_makers(text, source_url)
+                for candidate in candidates:
+                    if len(decision_makers) >= 3:
+                        break
+                    decision_makers.append(candidate)
+
+    non_binary_docs: List[Document] = []
+    binary_docs: List[Document] = []
+    for doc in documents:
+        source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
+        if is_binary_document(source_url):
+            binary_docs.append(doc)
+        else:
+            non_binary_docs.append(doc)
+    append_decision_makers(non_binary_docs)
+    if len(decision_makers) < 3:
+        append_decision_makers(binary_docs)
 
     return CrawlResult(
         organization_name=org_name,
