@@ -18,11 +18,7 @@ DECISION_ROLE_PRIORITY = [
     "direktion",
     "verwaltungsleitung",
 ]
-ROLE_KEYWORDS = [
-    *DECISION_ROLE_PRIORITY,
-    "leitung",
-    "ansprechpartner",
-]
+ROLE_KEYWORDS = DECISION_ROLE_PRIORITY
 
 EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_REGEX = re.compile(r"(\+49|0)[0-9][0-9\s\/\-()]{6,}")
@@ -96,8 +92,8 @@ def is_central_page(url: str, title: str) -> bool:
     return any(keyword in candidate for keyword in CENTRAL_PAGE_KEYWORDS)
 
 
-def is_decision_page(url: Optional[str], title: str, text: str) -> bool:
-    candidate = f"{url or ''} {title or ''} {text}".lower()
+def is_decision_page(url: Optional[str], text: str) -> bool:
+    candidate = f"{url or ''} {text}".lower()
     return any(keyword in candidate for keyword in ROLE_KEYWORDS)
 
 
@@ -204,32 +200,16 @@ def summarize_contacts(base_url: str, documents: List[Document]) -> CrawlResult:
         if central_contact.phone and central_contact.email:
             break
 
-    def append_decision_makers(candidate_docs: List[Document]) -> None:
-        for doc in candidate_docs:
-            if len(decision_makers) >= 3:
-                break
-            source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
-            title = doc.metadata.get("title") or ""
-            text = doc.markdown or ""
-
-            if is_decision_page(source_url, title, text):
-                candidates = extract_decision_makers(text, source_url)
-                for candidate in candidates:
-                    if len(decision_makers) >= 3:
-                        break
-                    decision_makers.append(candidate)
-
-    non_binary_docs: List[Document] = []
-    binary_docs: List[Document] = []
     for doc in documents:
         source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
-        if is_binary_document(source_url):
-            binary_docs.append(doc)
-        else:
-            non_binary_docs.append(doc)
-    append_decision_makers(non_binary_docs)
-    if len(decision_makers) < 3:
-        append_decision_makers(binary_docs)
+        text = doc.markdown or ""
+
+        if len(decision_makers) < 3 and is_decision_page(source_url, text):
+            candidates = extract_decision_makers(text, source_url)
+            for candidate in candidates:
+                if len(decision_makers) >= 3:
+                    break
+                decision_makers.append(candidate)
 
     return CrawlResult(
         organization_name=org_name,
