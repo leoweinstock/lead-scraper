@@ -151,11 +151,17 @@ def extract_decision_makers(text: str, source_url: str) -> List[DecisionMaker]:
     return decision_makers
 
 
-def collect_documents(raw_docs: Iterable[dict]) -> List[Document]:
+def collect_documents(raw_docs: Iterable) -> List[Document]:
     documents: List[Document] = []
     for doc in raw_docs:
-        markdown = doc.get("markdown") or ""
-        metadata = doc.get("metadata") or {}
+        if hasattr(doc, "model_dump"):
+            doc_dict = doc.model_dump()
+        elif hasattr(doc, "dict"):
+            doc_dict = doc.dict()
+        else:
+            doc_dict = doc
+        markdown = doc_dict.get("markdown") or ""
+        metadata = doc_dict.get("metadata") or {}
         documents.append(Document(markdown=markdown, metadata=metadata))
     return documents
 
