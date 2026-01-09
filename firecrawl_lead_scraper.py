@@ -97,6 +97,12 @@ def is_decision_page(url: Optional[str], text: str) -> bool:
     return any(keyword in candidate for keyword in ROLE_KEYWORDS)
 
 
+def is_binary_document(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    return url.lower().endswith((".pdf", ".doc", ".docx"))
+
+
 def extract_role(line: str) -> Optional[str]:
     line_lower = line.lower()
     for role in DECISION_ROLE_PRIORITY:
@@ -113,11 +119,11 @@ def extract_decision_makers(text: str, source_url: Optional[str]) -> List[Decisi
         role = extract_role(line)
         if not role:
             continue
-        context_lines = [line]
-        if idx > 0:
-            context_lines.insert(0, lines[idx - 1])
-        if idx + 1 < len(lines):
-            context_lines.append(lines[idx + 1])
+        context_lines = []
+        for offset in range(-2, 3):
+            line_idx = idx + offset
+            if 0 <= line_idx < len(lines):
+                context_lines.append(lines[line_idx])
         context_text = " ".join(context_lines)
         name_match = NAME_REGEX.search(context_text)
         name = name_match.group(1) if name_match else None
