@@ -11,26 +11,14 @@ from firecrawl import Firecrawl
 
 
 CENTRAL_PAGE_KEYWORDS = ["kontakt", "impressum"]
-ROLE_KEYWORDS = [
+DECISION_ROLE_PRIORITY = [
     "einrichtungsleitung",
     "klinikleitung",
     "geschäftsführung",
     "direktion",
     "verwaltungsleitung",
-    "pflegedienstleitung",
-    "personalleitung",
-    "leitung",
-    "ansprechpartner",
 ]
-ROLE_PRIORITY = [
-    "einrichtungsleitung",
-    "klinikleitung",
-    "geschäftsführung",
-    "direktion",
-    "verwaltungsleitung",
-    "pflegedienstleitung",
-    "personalleitung",
-]
+ROLE_KEYWORDS = DECISION_ROLE_PRIORITY
 
 EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_REGEX = re.compile(r"(\+49|0)[0-9][0-9\s\/\-()]{6,}")
@@ -100,24 +88,24 @@ def infer_org_name(base_url: str, documents: List[Document]) -> str:
 
 
 def is_central_page(url: str, title: str) -> bool:
-    candidate = f"{url} {title}".lower()
+    candidate = f"{url or ''} {title or ''}".lower()
     return any(keyword in candidate for keyword in CENTRAL_PAGE_KEYWORDS)
 
 
-def is_decision_page(url: str, text: str) -> bool:
-    candidate = f"{url} {text}".lower()
+def is_decision_page(url: Optional[str], text: str) -> bool:
+    candidate = f"{url or ''} {text}".lower()
     return any(keyword in candidate for keyword in ROLE_KEYWORDS)
 
 
 def extract_role(line: str) -> Optional[str]:
     line_lower = line.lower()
-    for role in ROLE_PRIORITY:
+    for role in DECISION_ROLE_PRIORITY:
         if role in line_lower:
             return role
     return None
 
 
-def extract_decision_makers(text: str, source_url: str) -> List[DecisionMaker]:
+def extract_decision_makers(text: str, source_url: Optional[str]) -> List[DecisionMaker]:
     decision_makers: List[DecisionMaker] = []
     seen = set()
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -191,18 +179,24 @@ def summarize_contacts(base_url: str, documents: List[Document]) -> CrawlResult:
     decision_makers: List[DecisionMaker] = []
 
     for doc in documents:
-        source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url") or ""
+        source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
         title = doc.metadata.get("title") or ""
         text = doc.markdown or ""
 
         if not central_contact.phone or not central_contact.email:
-            if is_central_page(source_url, title):
+            if source_url and is_central_page(source_url, title):
                 emails = extract_emails(text)
                 phones = extract_phones(text)
                 if emails or phones:
                     central_contact.email = central_contact.email or pick_first(emails)
                     central_contact.phone = central_contact.phone or pick_first(phones)
                     central_contact.source_url = central_contact.source_url or source_url
+        if central_contact.phone and central_contact.email:
+            break
+
+    for doc in documents:
+        source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
+        text = doc.markdown or ""
 
         if len(decision_makers) < 3 and is_decision_page(source_url, text):
             candidates = extract_decision_makers(text, source_url)
