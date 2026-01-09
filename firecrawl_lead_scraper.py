@@ -44,11 +44,21 @@ class DecisionMaker:
 
 
 @dataclass
+class ContactCandidate:
+    name: Optional[str]
+    role: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    source_url: Optional[str]
+
+
+@dataclass
 class CrawlResult:
     organization_name: str
     site: str
     central_contact: Contact
     decision_makers: List[DecisionMaker]
+    contacts: List[ContactCandidate]
 
 
 @dataclass
@@ -145,6 +155,37 @@ def extract_decision_makers(text: str, source_url: Optional[str]) -> List[Decisi
     return decision_makers
 
 
+def extract_contact_candidates(text: str, source_url: Optional[str]) -> List[ContactCandidate]:
+    candidates: List[ContactCandidate] = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for idx, line in enumerate(lines):
+        emails = extract_emails(line)
+        phones = extract_phones(line)
+        if not emails and not phones:
+            continue
+        context_lines = []
+        for offset in range(-2, 3):
+            line_idx = idx + offset
+            if 0 <= line_idx < len(lines):
+                context_lines.append(lines[line_idx])
+        context_text = " ".join(context_lines)
+        name_match = NAME_REGEX.search(context_text)
+        name = name_match.group(1) if name_match else None
+        role = extract_role(context_text) if context_text else None
+        for email in emails or [None]:
+            for phone in phones or [None]:
+                candidates.append(
+                    ContactCandidate(
+                        name=name,
+                        role=role,
+                        phone=phone,
+                        email=email,
+                        source_url=source_url,
+                    )
+                )
+    return candidates
+
+
 def collect_documents(raw_docs: Iterable) -> List[Document]:
     documents: List[Document] = []
     for doc in raw_docs:
@@ -183,6 +224,7 @@ def summarize_contacts(base_url: str, documents: List[Document]) -> CrawlResult:
     org_name = infer_org_name(base_url, documents)
     central_contact = Contact()
     decision_makers: List[DecisionMaker] = []
+    contacts: List[ContactCandidate] = []
 
     for doc in documents:
         source_url = doc.metadata.get("sourceURL") or doc.metadata.get("url")
@@ -211,11 +253,14 @@ def summarize_contacts(base_url: str, documents: List[Document]) -> CrawlResult:
                     break
                 decision_makers.append(candidate)
 
+        contacts.extend(extract_contact_candidates(text, source_url))
+
     return CrawlResult(
         organization_name=org_name,
         site=base_url,
         central_contact=central_contact,
         decision_makers=decision_makers,
+        contacts=contacts,
     )
 
 
@@ -260,6 +305,7 @@ def main() -> None:
             "site": result.site,
             "central_contact": asdict(result.central_contact),
             "decision_makers": [asdict(dm) for dm in result.decision_makers],
+            "contacts": [asdict(contact) for contact in result.contacts],
         },
         ensure_ascii=False,
         indent=2,
